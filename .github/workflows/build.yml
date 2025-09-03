@@ -1,1 +1,61 @@
+name: Build-Android-APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y openjdk-17-jdk zip unzip android-tools-adb git
+
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install PySide6 qtpip
+
+      - name: Download Android SDK/NDK (Qt helper)
+        run: |
+          git clone https://code.qt.io/pyside/pyside-setup
+          python pyside-setup/tools/cross_compile_android/main.py --download-only --skip-update --auto-accept-license
+
+      - name: Prepare wheels (aarch64)
+        run: |
+          mkdir -p ~/wheels
+          qtpip download PySide6 --android --arch aarch64
+          qtpip download Shiboken6 --android --arch aarch64
+          echo "Listing wheels:"
+          ls -la ~/wheels || true
+
+      - name: Patch pysidedeploy.spec with wheel paths
+        run: |
+          PYSIDE_WHEEL=$(ls ~/wheels/PySide6-*aarch64*.whl | head -n1)
+          SHIBOKEN_WHEEL=$(ls ~/wheels/shiboken6-*aarch64*.whl | head -n1)
+          echo "Using wheels: $PYSIDE_WHEEL / $SHIBOKEN_WHEEL"
+          sed -i "s|^wheel_pyside *=.*|wheel_pyside = $PYSIDE_WHEEL|" pysidedeploy.spec
+          sed -i "s|^wheel_shiboken *=.*|wheel_shiboken = $SHIBOKEN_WHEEL|" pysidedeploy.spec
+
+      - name: Build APK (debug)
+        run: |
+          pyside6-android-deploy --config-file pysidedeploy.spec -v --keep-deployment-files
+          ls -la dist || true
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: taqaddum-apk
+          path: dist/*debug*.apk
 
